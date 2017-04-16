@@ -51,6 +51,11 @@ mod readline {
         }
     }
 
+    pub fn get_readline_name() -> Option<&'static str> {
+        if unsafe{ rl_readline_name }.is_null() { return None; }
+        unsafe{ CStr::from_ptr(rl_readline_name) }.to_str().ok()
+    }
+
     #[link(name = "readline")]
     extern {
         fn history_list() -> *const *const HistEntry;
@@ -58,6 +63,7 @@ mod readline {
         fn rl_refresh_line(count: isize, key: isize) -> isize;
         fn rl_end_of_line(count: isize, key: isize) -> isize;
         fn rl_insert_text(string: *const u8) -> isize;
+        static rl_readline_name: *const c_char;
     }
 
     // look up fn via dlsym
@@ -86,14 +92,19 @@ pub extern fn rl_forward_search_history(direction: isize, key: isize) -> isize {
 }
 
 fn custom_isearch() -> bool {
-    let mut process = match Command::new("rl_custom_isearch")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn() {
-            Ok(process) => process,
-            // failed to run, do default readline search
-            Err(_) => { return false },
-        };
+    let mut command = Command::new("rl_custom_isearch");
+    command.stdin(Stdio::piped()).stdout(Stdio::piped());
+
+    // pass the readline name to process
+    if let Some(name) = readline::get_readline_name() {
+        command.env("READLINE_NAME", name);
+    }
+
+    let mut process = match command.spawn() {
+        Ok(process) => process,
+        // failed to run, do default readline search
+        Err(_) => { return false },
+    };
     let mut stdin = process.stdin.unwrap();
 
     readline::history_each(|line| {
