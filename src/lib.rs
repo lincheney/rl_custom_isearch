@@ -1,3 +1,5 @@
+#[macro_use]
+extern crate lazy_static;
 extern crate libc;
 
 use std::io::{Write, Read};
@@ -40,13 +42,23 @@ mod readline {
         pub fn rl_end_of_line(count: isize, key: isize) -> isize;
         pub fn rl_insert_text(string: *const u8) -> isize;
     }
+
+    fn get_original_fn(name: &str) -> fn(isize, isize)->isize {
+        let ptr = name.as_ptr();
+        let func = unsafe{ ::libc::dlsym(::libc::RTLD_NEXT, ptr as *const i8) };
+        unsafe{ ::std::mem::transmute(func) }
+    }
+
+    lazy_static! {
+        pub static ref RL_REVERSE_SEARCH_HISTORY: fn(isize, isize)->isize = get_original_fn("rl_reverse_search_history\0");
+        pub static ref RL_FORWARD_SEARCH_HISTORY: fn(isize, isize)->isize = get_original_fn("rl_forward_search_history\0");
+    }
 }
 
-
 #[no_mangle]
-pub extern fn rl_reverse_search_history(_direction: isize, _key: isize) -> isize {
-    custom_isearch();
-    return 0;
+pub extern fn rl_reverse_search_history(direction: isize, key: isize) -> isize {
+    // custom_isearch();
+    readline::RL_REVERSE_SEARCH_HISTORY(direction, key)
 }
 
 fn custom_isearch() {

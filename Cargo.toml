@@ -5,6 +5,7 @@ authors = ["Cheney Lin <lincheney@gmail.com>"]
 
 [dependencies]
 libc = "0.2.0"
+lazy_static = "~ 0.2"
 
 [lib]
 name = "rl_custom_isearch"
