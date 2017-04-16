@@ -23,13 +23,14 @@ mod readline {
         }
     }
 
-    pub fn history_each<F>(mut callback: F) where F: FnMut(&[u8]) {
+    // run callback for each history or until callback returns false
+    pub fn history_each<F>(mut callback: F) where F: FnMut(&[u8])->bool {
         let mut history = unsafe{ history_list() };
         if history.is_null() { return; }
 
         while ! unsafe{ (*history) }.is_null() {
             let entry = unsafe{ &**history };
-            callback(entry.get_line());
+            if ! callback(entry.get_line()) { return }
             history = unsafe{ history.offset(1) };
         }
     }
@@ -59,6 +60,7 @@ mod readline {
         fn rl_insert_text(string: *const u8) -> isize;
     }
 
+    // look up fn via dlsym
     fn get_original_fn(name: &str) -> unsafe fn(isize, isize)->isize {
         let ptr = name.as_ptr();
         let func = unsafe{ ::libc::dlsym(::libc::RTLD_NEXT, ptr as *const i8) };
@@ -84,29 +86,46 @@ pub extern fn rl_forward_search_history(direction: isize, key: isize) -> isize {
 }
 
 fn custom_isearch() -> bool {
-    let mut process = Command::new("fzf").arg("+m").arg("--tac").arg("--print0")
+    let mut process = match Command::new("fzfx").arg("+m").arg("--tac").arg("--print0")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn().expect("could not find fzf");
+        .spawn() {
+            Ok(process) => process,
+            // failed to run, do default readline search
+            Err(_) => { return false },
+        };
     let mut stdin = process.stdin.unwrap();
 
     readline::history_each(|line| {
-        stdin.write_all(line).unwrap();
-        stdin.write_all(b"\n").unwrap();
+        // break on errors (but otherwise ignore)
+        stdin.write_all(line).is_ok()
+            && stdin.write_all(b"\n").is_ok()
     });
 
+    // pass back stdin for process to close
     process.stdin = Some(stdin);
-    if ! process.wait().unwrap().success() {
-        readline::refresh_line();
-        return true
+    match process.wait() {
+        // failed to run, do default readline search
+        Err(_) => {
+            false
+        },
+        // exited with code != 0, leave line as is
+        Ok(code) if ! code.success() => {
+            readline::refresh_line();
+            true
+        },
+        Ok(_) => {
+            let mut stdout = process.stdout.unwrap();
+            let mut buf: Vec<u8> = vec![];
+            if stdout.read_to_end(&mut buf).is_err() {
+                // failed to read stdout, default to readline search
+                return false
+            }
+            // make sure buf is null terminated
+            if *buf.last().unwrap_or(&1) != 0 { buf.push(0); }
+
+            readline::set_text(buf);
+            true
+        }
     }
-
-    let mut stdout = process.stdout.expect("could not open stdout");
-    let mut buf: Vec<u8> = vec![];
-    stdout.read_to_end(&mut buf).unwrap();
-    // make sure buf is null terminated
-    if *buf.last().unwrap_or(&1) != 0 { buf.push(0); }
-
-    readline::set_text(buf);
-    true
 }
