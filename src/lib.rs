@@ -86,7 +86,7 @@ pub extern fn rl_forward_search_history(direction: isize, key: isize) -> isize {
 }
 
 fn custom_isearch() -> bool {
-    let mut process = match Command::new("fzfx").arg("+m").arg("--tac").arg("--print0")
+    let mut process = match Command::new("rl_custom_isearch")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn() {
