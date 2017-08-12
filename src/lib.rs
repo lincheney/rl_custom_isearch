@@ -5,12 +5,33 @@ extern crate libc;
 use std::io::{Write, Read};
 use std::process::{Command, Stdio};
 
+struct CArray {
+    ptr: *const *const readline::HistEntry
+}
+
+impl CArray {
+    fn new(ptr: *const *const readline::HistEntry) -> Self {
+        CArray{ptr: ptr}
+    }
+}
+
+impl Iterator for CArray {
+    type Item = &'static readline::HistEntry;
+    fn next(&mut self) -> Option<&'static readline::HistEntry> {
+        if self.ptr.is_null() { return None }
+        if unsafe{ *(self.ptr) }.is_null() { return None }
+        let value = unsafe{ &**self.ptr };
+        self.ptr = unsafe{ self.ptr.offset(1) };
+        Some(value)
+    }
+}
+
 mod readline {
     use std::os::raw::c_char;
     use std::ffi::CStr;
 
     #[repr(C)]
-    struct HistEntry {
+    pub struct HistEntry {
         line: *const c_char,
         timestamp: *const c_char,
         data: *const c_char,
@@ -23,16 +44,8 @@ mod readline {
         }
     }
 
-    // run callback for each history or until callback returns false
-    pub fn history_each<F>(mut callback: F) where F: FnMut(&[u8])->bool {
-        let mut history = unsafe{ history_list() };
-        if history.is_null() { return; }
-
-        while ! unsafe{ (*history) }.is_null() {
-            let entry = unsafe{ &**history };
-            if ! callback(entry.get_line()) { return }
-            history = unsafe{ history.offset(1) };
-        }
+    pub fn get_history() -> *const *const HistEntry {
+        unsafe{ history_list() }
     }
 
     pub fn refresh_line() {
@@ -107,11 +120,13 @@ fn custom_isearch() -> bool {
     };
     let mut stdin = process.stdin.unwrap();
 
-    readline::history_each(|line| {
+    for entry in CArray::new(readline::get_history()) {
+        let line = entry.get_line();
         // break on errors (but otherwise ignore)
-        stdin.write_all(line).is_ok()
-            && stdin.write_all(b"\n").is_ok()
-    });
+        if ! ( stdin.write_all(line).is_ok() && stdin.write_all(b"\n").is_ok() ) {
+            break
+        }
+    }
 
     // pass back stdin for process to close
     process.stdin = Some(stdin);
