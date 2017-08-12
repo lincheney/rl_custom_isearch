@@ -1,0 +1,3 @@
+#!/bin/bash
+FZF_DEFAULT_OPTS="--height ${FZF_TMUX_HEIGHT:-40%} $FZF_DEFAULT_OPTS --tac --tiebreak=index --bind=ctrl-r:toggle-sort $FZF_CTRL_R_OPTS +m" \
+    fzf --print0
