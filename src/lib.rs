@@ -1,5 +1,3 @@
-#[macro_use]
-extern crate lazy_static;
 extern crate libc;
 
 use std::io::{Write, Read};
@@ -77,31 +75,15 @@ mod readline {
         fn rl_end_of_line(count: isize, key: isize) -> isize;
         fn rl_insert_text(string: *const u8) -> isize;
         static rl_readline_name: *const c_char;
-    }
 
-    // look up fn via dlsym
-    fn get_original_fn(name: &str) -> unsafe fn(isize, isize)->isize {
-        let ptr = name.as_ptr();
-        let func = unsafe{ ::libc::dlsym(::libc::RTLD_NEXT, ptr as *const i8) };
-        unsafe{ ::std::mem::transmute(func) }
-    }
-
-    lazy_static! {
-        pub static ref RL_REVERSE_SEARCH_HISTORY: unsafe fn(isize, isize)->isize = get_original_fn("rl_reverse_search_history\0");
-        pub static ref RL_FORWARD_SEARCH_HISTORY: unsafe fn(isize, isize)->isize = get_original_fn("rl_forward_search_history\0");
+        pub fn rl_reverse_search_history(direction: isize, key: isize) -> isize;
     }
 }
 
 #[no_mangle]
-pub extern fn rl_reverse_search_history(direction: isize, key: isize) -> isize {
+pub extern fn rl_custom_function(direction: isize, key: isize) -> isize {
     if custom_isearch() { return 0; }
-    unsafe{ readline::RL_REVERSE_SEARCH_HISTORY(direction, key) }
-}
-
-#[no_mangle]
-pub extern fn rl_forward_search_history(direction: isize, key: isize) -> isize {
-    if custom_isearch() { return 0; }
-    unsafe{ readline::RL_FORWARD_SEARCH_HISTORY(direction, key) }
+    unsafe{ readline::rl_reverse_search_history(direction, key) }
 }
 
 fn custom_isearch() -> bool {
