@@ -24,9 +24,14 @@ macro_rules! dynlib_call {
     }}
 }
 
-macro_rules! dlsym_lookup {
+macro_rules! dlopen {
+    ($name:expr) => { dlopen!($name, ::libc::RTLD_LAZY) };
+    ($name:expr, $flags:expr) => { dynlib_call!(dlopen($name.as_ptr() as _, $flags)) };
+}
+
+macro_rules! dlsym {
     ($handle:expr, $name:expr) => {
-        dlsym_lookup!($handle, $name, _)
+        dlsym!($handle, $name, _)
     };
     ($handle:expr, $name:expr, $type:ty) => {{
         let name = concat!($name, "\0");
@@ -92,6 +97,7 @@ mod readline {
 
     #[allow(non_upper_case_globals)]
     mod lib {
+        use std::marker::PhantomData;
         use std::ffi::CStr;
 
         #[repr(C)]
@@ -108,24 +114,20 @@ mod readline {
             }
         }
 
-        pub struct Pointer<T>(usize, std::marker::PhantomData<T>);
+        pub struct Pointer<T>(usize, PhantomData<T>);
         impl<T> Pointer<T> {
-            pub fn is_null(&self) -> bool { self.0 == 0 }
-            pub fn ptr(&self) -> *mut T { self.0 as *mut T }
-        }
-        impl<T> From<*mut T> for Pointer<T> {
-            fn from(ptr: *mut T) -> Pointer<T> {
-                Pointer(ptr as _, std::marker::PhantomData)
-            }
+            pub fn new(ptr: *mut T)    -> Self { Self(ptr as _, PhantomData) }
+            pub fn is_null(&self)      -> bool { self.0 == 0 }
+            pub fn ptr(&self)        -> *mut T { self.0 as *mut T }
+            pub unsafe fn set(&self, value: T) { *self.ptr() = value; }
         }
 
         lazy_static! {
-            static ref libreadline: Pointer<::libc::c_void> =
-                unsafe{ dynlib_call!(dlopen(b"libreadline.so\0".as_ptr() as _, ::libc::RTLD_LAZY)) }.unwrap().into();
+            static ref libreadline: Pointer<libc::c_void> = Pointer::new(unsafe{ dlopen!(b"libreadline.so\0") }.unwrap());
         }
         macro_rules! readline_lookup {
             ($name:ident: $type:ty) => {
-                lazy_static! { pub static ref $name: $type = unsafe{ dlsym_lookup!(libreadline.ptr(), stringify!($name)) }.unwrap(); }
+                lazy_static! { pub static ref $name: $type = unsafe{ dlsym!(libreadline.ptr(), stringify!($name)) }.unwrap(); }
             }
         }
 
