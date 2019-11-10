@@ -1,7 +1,25 @@
+#[macro_use]
+extern crate lazy_static;
 extern crate libc;
 
 use std::io::{Write, Read};
 use std::process::{Command, Stdio};
+
+macro_rules! dlsym_lookup {
+    ($handle:expr, $name:expr) => {
+        dlsym_lookup!($handle, $name, _)
+    };
+    ($handle:expr, $name:expr, $result:ty) => {{
+        let name = concat!($name, "\0");
+        let func = libc::dlsym($handle, name.as_ptr() as *const i8);
+        if func.is_null() {
+            None
+        } else {
+            #[allow(clippy::transmute_ptr_to_ptr)]
+            Some(std::mem::transmute::<_, $result>(func))
+        }
+    }}
+}
 
 struct CArray {
     ptr: *const *const readline::HistEntry
@@ -25,58 +43,72 @@ impl Iterator for CArray {
 }
 
 mod readline {
-    use std::os::raw::c_char;
     use std::ffi::CStr;
-
-    #[repr(C)]
-    pub struct HistEntry {
-        line: *const c_char,
-        timestamp: *const c_char,
-        data: *const c_char,
-    }
-
-    impl HistEntry {
-        pub fn get_line(&self) -> &[u8] {
-            if self.line.is_null() { return &[0;0]; }
-            unsafe{ CStr::from_ptr(self.line) }.to_bytes()
-        }
-    }
+    pub use self::lib::{HistEntry, rl_reverse_search_history};
 
     pub fn get_history() -> *const *const HistEntry {
-        unsafe{ history_list() }
+        unsafe{ lib::history_list() }
     }
 
     pub fn refresh_line() {
-        unsafe{ rl_refresh_line(0, 0) };
+        unsafe{ lib::rl_refresh_line(0, 0) };
     }
 
     pub fn set_text(buf: Vec<u8>) {
         let ptr = buf.as_ptr();
         unsafe {
             // clear line
-            rl_end_of_line(0, 0);
-            rl_unix_line_discard(0, 0);
-            rl_refresh_line(0, 0);
+            lib::rl_end_of_line(0, 0);
+            lib::rl_unix_line_discard(0, 0);
+            lib::rl_refresh_line(0, 0);
             // insert selected
-            rl_insert_text(ptr);
+            lib::rl_insert_text(ptr as _);
         }
     }
 
     pub fn get_readline_name() -> Option<&'static str> {
-        if unsafe{ rl_readline_name }.is_null() { return None; }
-        unsafe{ CStr::from_ptr(rl_readline_name) }.to_str().ok()
+        match unsafe{ dlsym_lookup!(::libc::RTLD_DEFAULT, "rl_readline_name", *const i8) } {
+            Some(ptr) if ! ptr.is_null() => {
+                unsafe{ CStr::from_ptr(ptr) }.to_str().ok()
+            },
+            _ => None,
+        }
     }
 
-    #[link(name = "readline")]
-    extern {
-        fn history_list() -> *const *const HistEntry;
-        fn rl_unix_line_discard(count: isize, key: isize) -> isize;
-        fn rl_refresh_line(count: isize, key: isize) -> isize;
-        fn rl_end_of_line(count: isize, key: isize) -> isize;
-        fn rl_insert_text(string: *const u8) -> isize;
-        static rl_readline_name: *const c_char;
+    #[allow(non_upper_case_globals)]
+    mod lib {
+        use std::ffi::CStr;
+        use libc::RTLD_DEFAULT;
 
-        pub fn rl_reverse_search_history(direction: isize, key: isize) -> isize;
+        #[repr(C)]
+        pub struct HistEntry {
+            line: *const i8,
+            timestamp: *const i8,
+            data: *const i8,
+        }
+
+        impl HistEntry {
+            pub fn get_line(&self) -> &[u8] {
+                if self.line.is_null() { return &[0;0]; }
+                unsafe{ CStr::from_ptr(self.line) }.to_bytes()
+            }
+        }
+
+        macro_rules! static_dlsym_lookup {
+            ($name:ident, $type:ty) => {
+                lazy_static! {
+                    pub static ref $name: $type = unsafe{ dlsym_lookup!(RTLD_DEFAULT, stringify!($name)) }
+                        .expect(concat!("could not find: ", stringify!($name)));
+                }
+            }
+        }
+
+        static_dlsym_lookup!(history_list,              unsafe extern fn() -> *const *const HistEntry);
+        static_dlsym_lookup!(rl_unix_line_discard,      unsafe extern fn(isize, isize) -> isize);
+        static_dlsym_lookup!(rl_refresh_line,           unsafe extern fn(isize, isize) -> isize);
+        static_dlsym_lookup!(rl_end_of_line,            unsafe extern fn(isize, isize) -> isize);
+        static_dlsym_lookup!(rl_insert_text,            unsafe extern fn(string: *const i8) -> isize);
+        static_dlsym_lookup!(rl_reverse_search_history, unsafe extern fn(isize, isize) -> isize);
     }
 }
 
