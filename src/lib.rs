@@ -9,7 +9,7 @@ struct CArray {
 
 impl CArray {
     fn new(ptr: *const *const readline::HistEntry) -> Self {
-        CArray{ptr: ptr}
+        CArray{ptr}
     }
 }
 
@@ -36,9 +36,9 @@ mod readline {
     }
 
     impl HistEntry {
-        pub fn get_line<'a>(&'a self) -> &'a [u8] {
+        pub fn get_line(&self) -> &[u8] {
             if self.line.is_null() { return &[0;0]; }
-            unsafe{ CStr::from_ptr((&self).line) }.to_bytes()
+            unsafe{ CStr::from_ptr(self.line) }.to_bytes()
         }
     }
 
