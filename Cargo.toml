@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Cheney Lin <lincheney@gmail.com>"]
 
 [dependencies]
-libc = "0.2.0"
+libc = "0.2.65"
 
 [lib]
 name = "rl_custom_isearch"
