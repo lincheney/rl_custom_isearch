@@ -88,10 +88,13 @@ mod readline {
     }
 
     pub fn get_readline_name() -> Option<&'static str> {
-        if lib::rl_readline_name.is_null() {
-            None
-        } else {
-            unsafe{ CStr::from_ptr(lib::rl_readline_name.ptr()) }.to_str().ok()
+        unsafe {
+            let name = (*lib::rl_readline_name.ptr()).ptr();
+            if name.is_null() {
+                None
+            } else {
+                CStr::from_ptr(name).to_str().ok()
+            }
         }
     }
 
@@ -117,13 +120,18 @@ mod readline {
         pub struct Pointer<T>(usize, PhantomData<T>);
         impl<T> Pointer<T> {
             pub fn new(ptr: *mut T)    -> Self { Self(ptr as _, PhantomData) }
-            pub fn is_null(&self)      -> bool { self.0 == 0 }
             pub fn ptr(&self)        -> *mut T { self.0 as *mut T }
             pub unsafe fn set(&self, value: T) { *self.ptr() = value; }
         }
 
         lazy_static! {
-            static ref libreadline: Pointer<libc::c_void> = Pointer::new(unsafe{ dlopen!(b"libreadline.so\0") }.unwrap());
+            pub static ref libreadline: Pointer<libc::c_void> = Pointer::new(unsafe {
+                if dlsym!(libc::RTLD_DEFAULT, "rl_initialize", usize).is_ok() {
+                    libc::RTLD_DEFAULT
+                } else {
+                    dlopen!(b"libreadline.so\0").unwrap()
+                }
+            });
         }
         macro_rules! readline_lookup {
             ($name:ident: $type:ty) => {
@@ -137,7 +145,7 @@ mod readline {
         readline_lookup!(rl_end_of_line:            unsafe extern fn(isize, isize) -> isize);
         readline_lookup!(rl_reverse_search_history: unsafe extern fn(isize, isize) -> isize);
         readline_lookup!(rl_insert_text:            unsafe extern fn(*const i8) -> isize);
-        readline_lookup!(rl_readline_name:          Pointer<i8>);
+        readline_lookup!(rl_readline_name:          Pointer<Pointer<i8>>);
     }
 }
 
