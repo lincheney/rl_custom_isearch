@@ -5,19 +5,35 @@ extern crate libc;
 use std::io::{Write, Read};
 use std::process::{Command, Stdio};
 
+macro_rules! dynlib_call {
+    ($func:ident($($args:expr),*)) => {{
+        let ptr = {
+            use ::libc::$func;
+            $func($($args),*)
+        };
+        if ptr.is_null() {
+            let error = ::libc::dlerror();
+            if error.is_null() {
+                Err(concat!("unknown error calling: ", stringify!($func)))
+            } else {
+                Err(::std::ffi::CStr::from_ptr(error).to_str().unwrap())
+            }
+        } else {
+            Ok(ptr)
+        }
+    }}
+}
+
 macro_rules! dlsym_lookup {
     ($handle:expr, $name:expr) => {
         dlsym_lookup!($handle, $name, _)
     };
-    ($handle:expr, $name:expr, $result:ty) => {{
+    ($handle:expr, $name:expr, $type:ty) => {{
         let name = concat!($name, "\0");
-        let func = libc::dlsym($handle, name.as_ptr() as *const i8);
-        if func.is_null() {
-            None
-        } else {
-            #[allow(clippy::transmute_ptr_to_ptr)]
-            Some(std::mem::transmute::<_, $result>(func))
-        }
+        #[allow(clippy::transmute_ptr_to_ptr)]
+        dynlib_call!(dlsym($handle, name.as_ptr() as _)).map(|sym|
+            std::mem::transmute::<_, $type>(sym)
+        )
     }}
 }
 
@@ -67,18 +83,16 @@ mod readline {
     }
 
     pub fn get_readline_name() -> Option<&'static str> {
-        match unsafe{ dlsym_lookup!(::libc::RTLD_DEFAULT, "rl_readline_name", *const i8) } {
-            Some(ptr) if ! ptr.is_null() => {
-                unsafe{ CStr::from_ptr(ptr) }.to_str().ok()
-            },
-            _ => None,
+        if lib::rl_readline_name.is_null() {
+            None
+        } else {
+            unsafe{ CStr::from_ptr(lib::rl_readline_name.ptr()) }.to_str().ok()
         }
     }
 
     #[allow(non_upper_case_globals)]
     mod lib {
         use std::ffi::CStr;
-        use libc::RTLD_DEFAULT;
 
         #[repr(C)]
         pub struct HistEntry {
@@ -94,21 +108,34 @@ mod readline {
             }
         }
 
-        macro_rules! static_dlsym_lookup {
-            ($name:ident, $type:ty) => {
-                lazy_static! {
-                    pub static ref $name: $type = unsafe{ dlsym_lookup!(RTLD_DEFAULT, stringify!($name)) }
-                        .expect(concat!("could not find: ", stringify!($name)));
-                }
+        pub struct Pointer<T>(usize, std::marker::PhantomData<T>);
+        impl<T> Pointer<T> {
+            pub fn is_null(&self) -> bool { self.0 == 0 }
+            pub fn ptr(&self) -> *mut T { self.0 as *mut T }
+        }
+        impl<T> From<*mut T> for Pointer<T> {
+            fn from(ptr: *mut T) -> Pointer<T> {
+                Pointer(ptr as _, std::marker::PhantomData)
             }
         }
 
-        static_dlsym_lookup!(history_list,              unsafe extern fn() -> *const *const HistEntry);
-        static_dlsym_lookup!(rl_unix_line_discard,      unsafe extern fn(isize, isize) -> isize);
-        static_dlsym_lookup!(rl_refresh_line,           unsafe extern fn(isize, isize) -> isize);
-        static_dlsym_lookup!(rl_end_of_line,            unsafe extern fn(isize, isize) -> isize);
-        static_dlsym_lookup!(rl_insert_text,            unsafe extern fn(string: *const i8) -> isize);
-        static_dlsym_lookup!(rl_reverse_search_history, unsafe extern fn(isize, isize) -> isize);
+        lazy_static! {
+            static ref libreadline: Pointer<::libc::c_void> =
+                unsafe{ dynlib_call!(dlopen(b"libreadline.so\0".as_ptr() as _, ::libc::RTLD_LAZY)) }.unwrap().into();
+        }
+        macro_rules! readline_lookup {
+            ($name:ident: $type:ty) => {
+                lazy_static! { pub static ref $name: $type = unsafe{ dlsym_lookup!(libreadline.ptr(), stringify!($name)) }.unwrap(); }
+            }
+        }
+
+        readline_lookup!(history_list:              unsafe extern fn() -> *const *const HistEntry);
+        readline_lookup!(rl_unix_line_discard:      unsafe extern fn(isize, isize) -> isize);
+        readline_lookup!(rl_refresh_line:           unsafe extern fn(isize, isize) -> isize);
+        readline_lookup!(rl_end_of_line:            unsafe extern fn(isize, isize) -> isize);
+        readline_lookup!(rl_reverse_search_history: unsafe extern fn(isize, isize) -> isize);
+        readline_lookup!(rl_insert_text:            unsafe extern fn(*const i8) -> isize);
+        readline_lookup!(rl_readline_name:          Pointer<i8>);
     }
 }
 
