@@ -103,10 +103,11 @@ mod readline {
     mod lib {
         use std::marker::PhantomData;
         use std::ffi::CStr;
+        use std::os::raw::c_char;
 
         #[repr(C)]
         pub struct HistEntry {
-            line: *const i8,
+            line: *const c_char,
             timestamp: *const i8,
             data: *const i8,
         }
